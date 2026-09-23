@@ -1,7 +1,7 @@
 const SUPABASE_URL='https://nragtrsgbvrnmbwlowoi.supabase.co';
 const SUPABASE_KEY='sb_publishable_Y9GtqKdB0pD-KQItwiu4Mw_ANXeA1Da';
-const CLIENT_ID='wife';
-const APP_VERSION='3.4.0-ivet';
+const CLIENT_ID='david';
+const APP_VERSION='3.4.0';
 const AUTH_STORAGE_KEY='sb-nragtrsgbvrnmbwlowoi-auth-token';
 
 function parseStoredSession(raw){
@@ -149,7 +149,7 @@ async function init(){
   if(!location.hash)location.hash='#/training';else renderRoute();
 }
 function renderLogin(){
-  app.innerHTML=`<div class="login-page"><form class="login-card" id="login-form"><div class="brand-mark">IV</div><h1>Ivet · Tréning</h1><p>Prihlás sa do svojho tréningového logu.</p><label>E-mail<input id="email" type="email" autocomplete="email" required></label><label>Heslo<input id="password" type="password" autocomplete="current-password" required></label><button class="btn-primary" type="submit">PRIHLÁSIŤ SA</button><div class="form-error" id="login-error"></div></form></div>`;
+  app.innerHTML=`<div class="login-page"><form class="login-card" id="login-form"><div class="brand-mark">DV</div><h1>Tréning</h1><p>Prihlás sa do svojho tréningového logu.</p><label>E-mail<input id="email" type="email" autocomplete="email" required></label><label>Heslo<input id="password" type="password" autocomplete="current-password" required></label><button class="btn-primary" type="submit">PRIHLÁSIŤ SA</button><div class="form-error" id="login-error"></div></form></div>`;
   document.getElementById('login-form').onsubmit=async e=>{e.preventDefault();const btn=e.currentTarget.querySelector('button');btn.disabled=true;btn.textContent='PRIHLASUJEM…';const r=await supabase.auth.signInWithPassword({email:document.getElementById('email').value.trim(),password:document.getElementById('password').value});if(r.error){document.getElementById('login-error').textContent=r.error.message||'Prihlásenie sa nepodarilo.';btn.disabled=false;btn.textContent='PRIHLÁSIŤ SA';}};
 }
 async function loadCore(showLoading=true){
@@ -166,7 +166,7 @@ async function loadCore(showLoading=true){
     ]);
     for(const r of [plansR,sessionsR,sessionExR,setsR,logsR,measureR])if(r.error)throw new Error(r.error.message);
     state.plan=(plansR.data||[]).filter(p=>safeJson(p.payload).status==='active').sort((a,b)=>String(safeJson(b.payload).createdAt||'').localeCompare(String(safeJson(a.payload).createdAt||'')))[0]||null;
-    state.sessions=sessionsR.data||[];state.sessionExercises=(sessionExR.data||[]).filter(x=>validExerciseName(exerciseName(safeJson(x.payload),x.exercise_key)));state.sets=setsR.data||[];state.legacyLogs=[];state.measurements=[];
+    state.sessions=sessionsR.data||[];state.sessionExercises=(sessionExR.data||[]).filter(x=>validExerciseName(exerciseName(safeJson(x.payload),x.exercise_key)));state.sets=setsR.data||[];state.legacyLogs=(logsR.data||[]).filter(x=>validExerciseName(x.exercise_name));state.measurements=measureR.data||[];
     if(state.plan){const [wR,eR]=await Promise.all([supabase.from('trainer_hub_workouts').select('*').eq('owner_id',uid).eq('client_id',CLIENT_ID).eq('plan_id',state.plan.id).order('ordinal'),supabase.from('trainer_hub_workout_exercises').select('*').eq('owner_id',uid).eq('client_id',CLIENT_ID).eq('plan_id',state.plan.id).order('ordinal')]);if(wR.error)throw new Error(wR.error.message);if(eR.error)throw new Error(eR.error.message);state.workouts=wR.data||[];state.planExercises=(eR.data||[]).filter(x=>validExerciseName(exerciseName(safeJson(x.payload),x.exercise_key)));}else{state.workouts=[];state.planExercises=[];}
     const active=state.sessions.find(s=>s.status==='active');setActive(active||null);state.loading=false;renderRoute();
   }catch(e){console.error(e);state.loading=false;window.__showBootError(e.message||String(e));}

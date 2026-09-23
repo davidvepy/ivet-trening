@@ -42,11 +42,13 @@ function previousEntryForKey(key,excludeSessionId=null){
   if(!norm)return legacyEntry;if(!legacyEntry)return norm;return String(legacyEntry.date)>String(norm.date)?legacyEntry:norm;
 }
 function suggestWorkoutWeight(exPayload,key){
-  const planned=n(exPayload.weight,0),prev=previousEntryForKey(key);if(!prev?.sets?.length)return planned;
-  const sets=prev.sets.filter(s=>n(s.reps,0)>0),lastWeight=n(sets[0]?.weight,planned);if(!sets.length)return planned;
-  const sameWeight=sets.every(s=>n(s.weight,0)===lastWeight),top=sets.length>=n(exPayload.sets,sets.length)&&sets.slice(0,n(exPayload.sets,sets.length)).every(s=>n(s.reps,0)>=n(exPayload.repMax,999));
-  if(sameWeight&&top&&n(exPayload.step,0)>0)return lastWeight+n(exPayload.step,0);
-  return lastWeight||planned;
+  const planned=n(exPayload.weight,0),prev=previousEntryForKey(key);
+  if(!prev?.sets?.length)return planned;
+  const updatedAt=exPayload.weightUpdatedAt?new Date(exPayload.weightUpdatedAt).getTime():0;
+  const prevTime=n(prev.timestamp, prev.date?new Date(`${prev.date}T23:59:59`).getTime():0);
+  if(updatedAt&&prevTime&&updatedAt>prevTime)return planned;
+  const working=prev.sets.filter(s=>(s.set_type||'working')!=='warmup'&&s.complete!==false&&n(s.weight,null)!==null).sort((a,b)=>n(a.ordinal,0)-n(b.ordinal,0));
+  return n(working.at(-1)?.weight,planned);
 }
 async function startWorkout(templateKey,workout){
   if(state.activeSession){toast('Máš otvorený tréning.');return updateUrl('#/active');}
@@ -54,7 +56,7 @@ async function startWorkout(templateKey,workout){
   const uid=state.user.id,p=safeJson(workout.payload),id=`session-${Date.now()}-${crypto.randomUUID().slice(0,8)}`;
   const session={owner_id:uid,client_id:CLIENT_ID,id,recorded_date:todayIso(),status:'active',payload:{id,date:todayIso(),status:'active',title:p.title||`Tréning ${templateKey}`,template:templateKey,workoutId:workout.id,planId:state.plan?.id||null,source:'tracker_v32',version:APP_VERSION,ramp:p.ramp||[],rampChecks:{},partial:false}};
   const exercises=planEx.map((row,i)=>{const ep={...safeJson(row.payload)};ep.weight=suggestWorkoutWeight(ep,row.exercise_key);ep.templateExerciseId=row.id;ep.templateWorkoutId=workout.id;return{owner_id:uid,client_id:CLIENT_ID,session_id:id,id:`ex-${i+1}-${slugify(row.exercise_key).slice(0,28)}`,ordinal:i+1,exercise_key:row.exercise_key,payload:ep};});
-  const sets=[];for(const ex of exercises){const ep=safeJson(ex.payload),prev=previousEntryForKey(ex.exercise_key);for(let i=1;i<=n(ep.sets,3);i++){const ps=prev?.sets?.[i-1];sets.push({owner_id:uid,client_id:CLIENT_ID,session_id:id,exercise_id:ex.id,id:`set-${i}-${crypto.randomUUID().slice(0,8)}`,ordinal:i,weight:n(ps?.weight,n(ep.weight,0)),reps:n(ps?.reps,n(ep.repMin,8)),rir:null,complete:false,set_type:'working',completed_at:null});}}
+  const sets=[];for(const ex of exercises){const ep=safeJson(ex.payload),prev=previousEntryForKey(ex.exercise_key);for(let i=1;i<=n(ep.sets,3);i++){const ps=prev?.sets?.[i-1];sets.push({owner_id:uid,client_id:CLIENT_ID,session_id:id,exercise_id:ex.id,id:`set-${i}-${crypto.randomUUID().slice(0,8)}`,ordinal:i,weight:n(ep.weight,0),reps:n(ps?.reps,n(ep.repMin,8)),rir:null,complete:false,set_type:'working',completed_at:null});}}
   let r=await supabase.from('trainer_hub_workout_sessions').insert(session);if(r.error)return toast(r.error.message,'error',4500);
   r=await supabase.from('trainer_hub_session_exercises').insert(exercises);if(r.error)return toast(r.error.message,'error',4500);
   r=await supabase.from('trainer_hub_workout_sets').insert(sets);if(r.error)return toast(r.error.message,'error',4500);
@@ -77,7 +79,7 @@ function renderRamp(p){
 function renderExerciseCard(ex,isNext,nextSetId){
   const ep=safeJson(ex.payload),sets=state.activeSets.filter(s=>s.exercise_id===ex.id).sort((a,b)=>a.ordinal-b.ordinal),prev=previousEntryForKey(ex.exercise_key,ex.session_id);
   return `<article class="exercise-card ${isNext?'next-exercise':''}"><div class="exercise-card-head"><button class="exercise-title" data-detail="${h(ex.id)}"><strong>${h(exerciseName(ep,ex.exercise_key))}</strong>${exerciseSkName(ep)&&exerciseSkName(ep)!==exerciseName(ep,ex.exercise_key)?`<span>${h(exerciseSkName(ep))}</span>`:''}</button><button class="exercise-dots" data-menu="${h(ex.id)}">${icon('dots')}</button></div>
-  <div class="exercise-target"><span>Cieľ <b>${sets.filter(x=>(x.set_type||'working')!=='warmup').length}×${h(ep.repMin??'?')}${ep.repMax&&ep.repMax!==ep.repMin?`–${h(ep.repMax)}`:''}</b></span><span>Odporúčanie <b>${fmtNumber(ep.weight)} kg</b></span></div>
+  <div class="exercise-target"><span>Cieľ <b>${sets.filter(x=>(x.set_type||'working')!=='warmup').length}×${h(ep.repMin??'?')}${ep.repMax&&ep.repMax!==ep.repMin?`–${h(ep.repMax)}`:''}</b></span><span>Východisková <b>${fmtNumber(ep.weight)} kg</b></span></div>
   <div class="exercise-menu" data-menu-panel="${h(ex.id)}"><button data-action="replace" data-ex="${h(ex.id)}">Nahradiť cvik</button><button data-action="add" data-ex="${h(ex.id)}">Pridať sériu</button><button data-action="remove" data-ex="${h(ex.id)}">Odobrať sériu</button><button data-action="detail" data-ex="${h(ex.id)}">Detail cviku</button></div><div class="replace-panel" data-replace-panel="${h(ex.id)}"></div>
   <table class="set-table"><thead><tr><th>SET</th><th>MINULE</th><th>KG</th><th>REPS</th><th>HOTOVO</th></tr></thead><tbody>${sets.map((set,i)=>renderSetRow(set,prev?.sets?.[i],nextSetId===set.id)).join('')}</tbody></table></article>`;
 }
@@ -128,7 +130,7 @@ function renderTraining(){
       <div class="hero-kicker">${active?'ROZPRACOVANÝ TRÉNING':'DNES / NAJBLIŽŠIE'}</div>
       <h2>${h(active?safeJson(active.payload).title:(tp?.title||'Vyber si tréning'))}</h2>
       <p>${active?'Série máš priebežne uložené. Môžeš pokračovať presne tam, kde si skončil.':h(tp?.durationRange||tp?.instructions||'Silový tréning, mobilita alebo kondícia podľa plánu.')}</p>
-      <button id="main-start">${active?'POKRAČOVAŤ':'ZAČAŤ SILOVÝ TRÉNING'}</button>
+      <button id="main-start">${active?'POKRAČOVAŤ':'ZAČAŤ TRÉNING'}</button>
     </section>
     <div class="section-heading"><div><span>SILA</span><h2>Moje tréningy</h2></div></div>
     <div class="strength-grid" id="template-strip">${strength}</div>
@@ -238,7 +240,7 @@ function renderTraining(){
     return `<div class="week-row ${day===today?'today':''}"><div class="week-day"><b>${labels[day]}</b>${day===today?'<span>DNES</span>':''}</div><div class="week-items">${ws.length?ws.map(w=>renderWeekWorkout(w)).join(''):'<div class="week-empty">Voľno / ľahká regenerácia</div>'}</div></div>`;
   }).join('');
   const content=`<header class="home-top"><div><span>TRÉNINGOVÝ HUB</span><h1>Týždenný plán</h1></div><div class="status-dot ${state.online?'':'offline'}"></div></header>
-    <section class="workout-hero ${active?'active':''}"><div class="hero-kicker">${active?'ROZPRACOVANÝ TRÉNING':'DNES / NAJBLIŽŠIE'}</div><h2>${h(active?safeJson(active.payload).title:(tp?.title||'Vyber si tréning'))}</h2><p>${active?'Série máš priebežne uložené. Môžeš pokračovať presne tam, kde si skončil.':h(tp?.durationRange||tp?.instructions||'Týždeň máš pokope na jednej obrazovke.')}</p><button id="main-start">${active?'POKRAČOVAŤ':'ZAČAŤ SILOVÝ TRÉNING'}</button></section>
+    <section class="workout-hero ${active?'active':''}"><div class="hero-kicker">${active?'ROZPRACOVANÝ TRÉNING':'DNES / NAJBLIŽŠIE'}</div><h2>${h(active?safeJson(active.payload).title:(tp?.title||'Vyber si tréning'))}</h2><p>${active?'Série máš priebežne uložené. Môžeš pokračovať presne tam, kde si skončil.':h(tp?.durationRange||tp?.instructions||'Týždeň máš pokope na jednej obrazovke.')}</p><button id="main-start">${active?'POKRAČOVAŤ':'ZAČAŤ TRÉNING'}</button></section>
     <div class="quick-start"><span>Rýchly štart</span><div>${['A','B','C'].map(k=>`<button data-template="${k}" ${templates[k]?'':'disabled'}>${k}</button>`).join('')}</div></div>
     <div class="section-heading week-heading"><div><span>PLÁN</span><h2>Tento týždeň</h2></div></div><div class="week-plan">${weekRows}</div>`;
   app.innerHTML=shell(content,'training');bindNav();
@@ -249,121 +251,4 @@ function renderTraining(){
 function renderWeekWorkout(w){
   const p=safeJson(w.payload),type=p.type||'Tréning';
   return `<button class="week-workout" data-week-workout="${h(w.id)}"><div><strong>${h(String(p.title||type).replace(/^(Pondelok|Utorok|Streda|Štvrtok|Piatok|Sobota|Nedeľa)\s*·\s*/i,''))}</strong><span>${h(p.durationRange||p.objective||p.instructions||type)}</span></div><em>${p.type==='Silový tréning'?'SILA':h(type)}</em><i>›</i></button>`;
-}
-
-
-/* ===== IVET v3.4 final UX/UI overrides ===== */
-function availableStrengthKeys(templates){
-  return ['A','B','C'].filter(k=>templates[k]);
-}
-function templateKeyForWorkout(w){
-  const m=String(safeJson(w?.payload).title||'').match(/^Tréning\s+([ABC])\b/i);
-  return m?.[1]?.toUpperCase()||null;
-}
-function todayStrengthWorkout(){
-  const day=new Date().getDay();
-  return state.workouts
-    .filter(w=>safeJson(w.payload).type==='Silový tréning'&&n(safeJson(w.payload).day,null)===day)
-    .sort((a,b)=>a.ordinal-b.ordinal)[0]||null;
-}
-function renderTraining(){
-  const templates=strengthTemplates(),active=state.activeSession,today=new Date().getDay();
-  const keys=availableStrengthKeys(templates);
-  const todayWorkout=todayStrengthWorkout();
-  const todayKey=templateKeyForWorkout(todayWorkout);
-  const order=[1,2,3,4,5,6,0],labels={1:'PONDELOK',2:'UTOROK',3:'STREDA',4:'ŠTVRTOK',5:'PIATOK',6:'SOBOTA',0:'NEDEĽA'};
-  const cards=keys.map(k=>renderTemplateCardV34(k,templates[k])).join('');
-  const weekRows=order.map(day=>{
-    const ws=state.workouts.filter(w=>n(safeJson(w.payload).day,null)===day).sort((a,b)=>a.ordinal-b.ordinal);
-    return `<div class="week-row ${day===today?'today':''}"><div class="week-day"><b>${labels[day]}</b>${day===today?'<span>DNES</span>':''}</div><div class="week-items">${ws.length?ws.map(renderWeekWorkout).join(''):'<div class="week-empty">Voľno / regenerácia</div>'}</div></div>`;
-  }).join('');
-
-  const next=nextPlannedWorkout(),np=safeJson(next?.w?.payload);
-  const subtitle=active
-    ? 'Rozpracovaný tréning máš priebežne uložený.'
-    : todayWorkout
-      ? `Dnes: ${String(safeJson(todayWorkout.payload).title||'tréning').replace(/ ·.*$/,'')}`
-      : np?.title ? `Najbližšie: ${String(np.title).replace(/ ·.*$/,'')}` : 'Vyber si tréning A alebo B.';
-
-  const content=`
-    <header class="home-header"><h1>Tréning</h1></header>
-    <button class="start-workout" id="main-start">${active?'POKRAČOVAŤ V TRÉNINGU':'ZAČAŤ TRÉNING'}</button>
-    <div class="today-line"><span>${active?'ROZPRACOVANÉ':'PLÁN'}</span><b>${h(subtitle)}</b></div>
-    <div class="section-bar"><h2>MOJE TRÉNINGY</h2></div>
-    <div class="strength-grid ivet-strength-grid" id="template-strip">${cards}</div>
-    <div class="section-bar"><h2>TÝŽDENNÝ PLÁN</h2></div>
-    <div class="week-plan">${weekRows}</div>`;
-
-  app.innerHTML=shell(content,'training');bindNav();
-
-  document.getElementById('main-start').onclick=()=>{
-    if(active)return updateUrl('#/active');
-    if(todayWorkout&&todayKey&&templates[todayKey])return startWorkout(todayKey,todayWorkout);
-    document.getElementById('template-strip')?.scrollIntoView({behavior:'smooth',block:'center'});
-  };
-  document.querySelectorAll('[data-template]').forEach(b=>b.onclick=()=>{
-    const w=templates[b.dataset.template];
-    if(w)startWorkout(b.dataset.template,w);
-  });
-  document.querySelectorAll('[data-week-workout]').forEach(b=>b.onclick=()=>{
-    const w=state.workouts.find(x=>x.id===b.dataset.weekWorkout);if(!w)return;
-    const p=safeJson(w.payload);
-    if(p.type==='Silový tréning'){
-      const key=templateKeyForWorkout(w);
-      if(key)return startWorkout(key,w);
-    }
-    updateUrl(`#/routine/${encodeURIComponent(w.id)}`);
-  });
-}
-function renderTemplateCardV34(key,w){
-  const names=templateShortList(w),p=safeJson(w?.payload);
-  return `<button class="strength-card" data-template="${key}"><div class="strength-badge">${key}</div><div class="strength-copy"><strong>${h(String(p.title||`Tréning ${key}`).replace(/ ·.*$/,''))}</strong><span>${h(names.slice(0,4).join(' · ')||'Tréning')}</span></div><div class="card-arrow">›</div></button>`;
-}
-
-function renderExerciseCard(ex,isNext,nextSetId){
-  const ep=safeJson(ex.payload),sets=state.activeSets.filter(s=>s.exercise_id===ex.id).sort((a,b)=>a.ordinal-b.ordinal),prev=previousEntryForKey(ex.exercise_key,ex.session_id);
-  const workingCount=sets.filter(x=>(x.set_type||'working')!=='warmup').length;
-  return `<article class="exercise-card ${isNext?'next-exercise':''}">
-    <div class="exercise-card-head">
-      <button class="exercise-title" data-detail="${h(ex.id)}"><strong>${h(exerciseName(ep,ex.exercise_key))}</strong>${exerciseSkName(ep)&&exerciseSkName(ep)!==exerciseName(ep,ex.exercise_key)?`<span>${h(exerciseSkName(ep))}</span>`:''}</button>
-      <button class="exercise-dots" data-menu="${h(ex.id)}">${icon('dots')}</button>
-    </div>
-    <div class="exercise-target"><span>Cieľ <b>${workingCount}×${h(ep.repMin??'?')}${ep.repMax&&ep.repMax!==ep.repMin?`–${h(ep.repMax)}`:''}</b></span>${n(ep.weight,null)!==null?`<span>Odporúčanie <b>${fmtNumber(ep.weight)} kg</b></span>`:''}</div>
-    <div class="exercise-menu" data-menu-panel="${h(ex.id)}">
-      <button data-action="replace" data-ex="${h(ex.id)}">Nahradiť cvik</button>
-      <button data-action="add" data-ex="${h(ex.id)}">Pridať sériu</button>
-      <button data-action="remove" data-ex="${h(ex.id)}">Odobrať sériu</button>
-      <button data-action="detail" data-ex="${h(ex.id)}">Detail cviku</button>
-      <button data-action="edit" data-ex="${h(ex.id)}">Upraviť cvik</button>
-    </div>
-    <div class="replace-panel" data-replace-panel="${h(ex.id)}"></div>
-    <table class="set-table"><thead><tr><th>SET</th><th>MINULE</th><th>KG</th><th>REPS</th><th>HOTOVO</th></tr></thead><tbody>${sets.map((set,i)=>renderSetRow(set,prev?.sets?.[i],nextSetId===set.id)).join('')}</tbody></table>
-  </article>`;
-}
-async function handleExerciseAction(action,id){
-  const ex=state.activeExercises.find(x=>x.id===id);if(!ex)return;
-  document.querySelector(`[data-menu-panel="${CSS.escape(id)}"]`)?.classList.remove('open');
-  if(action==='detail')return updateUrl(`#/exercise/${encodeURIComponent(id)}`);
-  if(action==='edit'){state.editExerciseOpen=true;return updateUrl(`#/exercise/${encodeURIComponent(id)}`);}
-  if(action==='add')return addSet(ex);
-  if(action==='remove')return removeSet(ex);
-  if(action==='replace')return showReplacementPanel(ex);
-}
-
-function renderActive(){
-  const s=state.activeSession;if(!s)return updateUrl('#/training');
-  const p=safeJson(s.payload),next=nextIncompleteSet();
-  app.innerHTML=`<main class="active-page">
-    <header class="active-header"><div><b>${h(String(p.title||'Tréning').replace(/ ·.*$/,''))}</b></div><button id="finish-toggle">UKONČIŤ</button></header>
-    <div class="workout-actions ${state.finishOpen?'open':''}" id="finish-panel">
-      <div class="action-sheet-title"><b>Ukončiť tréning?</b><span>Zmeny sa ukladajú priebežne.</span></div>
-      <button id="finish-cancel"><b>Pokračovať</b><span>Vrátiť sa k tréningu</span></button>
-      <button id="save-exit"><b>Uložiť a zavrieť</b><span>Tréning zostane aktívny</span></button>
-      <button id="finish-confirm" class="action-primary"><b>Dokončiť a uložiť</b><span>Zapísať históriu a progres</span></button>
-      <button id="discard-workout" class="action-danger"><b>Ukončiť bez uloženia</b><span>Vymazať iba túto rozpracovanú session</span></button>
-    </div>
-    <div class="timer-bar ${state.timer?'on':''}" id="timer-bar"><div><strong class="timer-count">0:00</strong><span class="timer-exercise">Pauza</span></div><div><button id="rest-minus">−30</button><button id="rest-plus">+30</button><button id="rest-skip">Preskočiť</button></div></div>
-    <section class="active-content">${renderRamp(p)}${state.activeExercises.map(ex=>renderExerciseCard(ex,next?.exercise_id===ex.id,next?.set_id)).join('')}</section>
-  </main>`;
-  bindActive();renderTimerOnly();ensureTimerTick();
 }

@@ -131,25 +131,3 @@ async function reconcileActiveSetCount(ex,target){
   while(rows.length<target){const last=rows.at(-1),row={owner_id:state.user.id,client_id:CLIENT_ID,session_id:ex.session_id,exercise_id:ex.id,id:`set-${rows.length+1}-${crypto.randomUUID().slice(0,8)}`,ordinal:rows.length+1,weight:n(last?.weight,n(safeJson(ex.payload).weight,0)),reps:n(last?.reps,n(safeJson(ex.payload).repMin,8)),rir:null,complete:false,set_type:'working',completed_at:null};const r=await supabase.from('trainer_hub_workout_sets').insert(row);if(r.error)break;state.sets.push(row);state.activeSets.push(row);rows.push(row);}
   while(rows.length>target){const row=rows.at(-1);if(row.complete)break;const r=await supabase.from('trainer_hub_workout_sets').delete().eq('owner_id',state.user.id).eq('client_id',CLIENT_ID).eq('session_id',row.session_id).eq('exercise_id',row.exercise_id).eq('id',row.id);if(r.error)break;state.sets=state.sets.filter(x=>x.id!==row.id);state.activeSets=state.activeSets.filter(x=>x.id!==row.id);rows.pop();}
 }
-
-
-/* ===== IVET v3.4 progress safety + technique refinement ===== */
-function renderProgress(){
-  if(state.progressTab==='body')state.progressTab='exercises';
-  const tabs=[['exercises','Cviky'],['tonnage','Tonáž']];
-  const body=state.progressTab==='tonnage'?renderTonnageProgress():renderExerciseProgressList();
-  const content=`<header class="page-title"><h1>Progres</h1></header><div class="subtabs">${tabs.map(([k,l])=>`<button data-progress-tab="${k}" class="${state.progressTab===k?'active':''}">${l}</button>`).join('')}</div>${body}`;
-  app.innerHTML=shell(content,'progress');bindNav();
-  document.querySelectorAll('[data-progress-tab]').forEach(b=>b.onclick=()=>{state.progressTab=b.dataset.progressTab;renderProgress();});
-  bindProgressBody();
-}
-function techniqueCards(p,muscles){
-  const how=Array.isArray(p.how)?p.how:[],breathing=p.breathing||p.brace||'Nadýchni sa pred pracovnou fázou, spevni stred tela a počas pohybu drž kontrolovaný tlak v trupe.';
-  return `<div class="tech-list">
-    <div><b>Setup</b><p>${h(how[0]||'Nastav stabilnú pozíciu a kontrolovaný rozsah.')}</p></div>
-    <div><b>Vykonanie</b><p>${h(how.slice(1).join(' ')||'Pohyb veď kontrolovane bez švihu.')}</p></div>
-    <div><b>Dýchanie / brace</b><p>${h(breathing)}</p></div>
-    <div><b>Čo máš cítiť</b><p>${h(muscles.length?muscles.join(' · '):'Cieľovú svalovú skupinu bez ostrej kĺbovej bolesti.')}</p></div>
-    <div><b>Najčastejšia chyba</b><p>${h(p.mistake||'Strata kontroly alebo kompenzácia trupom.')}</p></div>
-  </div>`;
-}
